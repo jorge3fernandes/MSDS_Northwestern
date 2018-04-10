@@ -1,13 +1,13 @@
 ---
-output:
-  html_document: default
-  pdf_document: default
+title: "Moneyball"
+output: html_notebook
 ---
-List of Packages used;
- - caret
- - corrplot
- - dplyr
- - missForest
+
+List of Packages used;  
+ - caret  
+ - corrplot  
+ - dplyr  
+ - missForest  
 ```{r}
 library(caret)
 library(corrplot)
@@ -77,8 +77,6 @@ pairs(moneyball,
       lower.panel = panel.cor,
       upper.panel = upper.panel)
 ```
-
-
 
 
 
