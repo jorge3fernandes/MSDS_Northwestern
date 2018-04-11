@@ -1,18 +1,19 @@
 ---
-output:
-  html_document: default
-  pdf_document: default
+title: "Moneyball"
+output: html_notebook
 ---
-List of Packages used;
- - caret
- - corrplot
- - dplyr
- - missForest
-```{r}
+
+List of Packages used;  
+ - caret  
+ - corrplot  
+ - dplyr  
+ - missForest  
+```{r message=FALSE}
 library(caret)
 library(corrplot)
 library(dplyr)
-library(missForest) # will be used to impute missing values
+library(mice) # will be used to impute missing values
+library(VIM)
 ```
 
 
@@ -21,38 +22,41 @@ library(missForest) # will be used to impute missing values
 moneyball = read.csv('/Users/legs_jorge/Documents/Data Science Projects/MSDS_Northwestern/MSDS 411/Unit 01 Moneyball Baseball Problem/Data/moneyball.csv', header = T)
 ```
 
-Let's do a quick analysis to understand the distribution Null values accross our dataset. Here, we count the number of NAs and divide it by the number of rows to get a per columns percentage of NAs.
-```{r}
+Let's do a quick analysis to understand the distribution Null values accross our dataset. Let sort the fields with most NA from high to low..
+```{r message=FALSE}
 #let check for NAs in the data
 #Counting the number of NAs per column and check the percentage of NAs per column
 NAPerc <- sapply(moneyball, function(x) (sum(is.na(x))/length(x))*100) %>%
   data.frame()
 NAPerc$Column <- rownames(NAPerc)
 colnames(NAPerc) <- c("NA_Perc", "Col_Name")
-NAPerc
-```
-
-Let's focus only on columns with missing values.
-```{r}
 subset(NAPerc,NA_Perc > 0) %>% arrange(desc(NA_Perc))
-
+matrixplot(moneyball)
 ```
+It's clear that TEAM_BATTING_HBP is going to be a problematic column with 92% of the data missing.
+Before we start the imputation, let's try to understand why we have missing data. 
+
+**There are two types of missing data**  
+
+ - *MCAR*: missing completely at random. This is the desirable scenario in case of missing data.  
+ - *MNAR*: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?  
+It would be good to understand exactly what type of missing value we are dealing with.  
+
+Let's use the `mice` package to help us understdant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
+```{r}
+md.pattern(moneyball) %>% data.frame()
+```
+The **first column** of the output shows the number of unique missing data patterns. There are 191 observations with nonmissing values, and there are 1295 observations with nonmissing values except for the variable TEAM_BATTING_HBP. The **rightmost column** shows the number of *missing variables* in a particular missing pattern. For example, the first row has no missing value and it is “0” in the row. The **last row** counts the number of missing values for each variable. For example, the variable TEAM_PITCHING_BB contains no missing values and the variable TEAM_BATTING_SO contains 102 missing values. This table can be helpful when you decide to drop some observations with missing variables exceeding a preset threshold.
 
 
-Looks like we will be deleting the TEAM_BATTING_HPB, But first I need to understand why it's missing. After doing some reading it looks like that columns could be translated to a 0 or 1. I need to do more investigating.
+After doing some reading it looks like that columns could be translated to a 0 or 1. I need to do more investigating.
 From working experience, usually columns with high volumes of NAs indicates important informations, simply because they could be capturing rare instance where a process fails. Instead of deleting it, I will try to see if I can transform it into a categorical variable with 1s and 0s. Now, regarding the other one, I will try some other inputation methods such as KNN, mean, median, etc.
 [Here](https://www.r-bloggers.com/imputing-missing-data-with-r-mice-package/) is a great article from Rblogger that discusses the package [MICE](https://cran.r-project.org/web/packages/mice/mice.pdf).
 
 
 
 ### Let the Inputation begin
-Before we start the imputation, let's try to understand why we have missing data. 
 
-**There are two types of missing data**
- - MCAR: missing completely at random. This is the desirable scenario in case of missing data.
- - MNAR: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?
-
-It would be good to understand exactly what type of missing value we are dealing with.
 ```{r}
 moneyball[is.na(moneyball) == TRUE] <- 0
 mball_cor <- cor(moneyball)
@@ -78,9 +82,9 @@ pairs(moneyball,
       upper.panel = upper.panel)
 ```
 
+## Reference
 
-
-
+ - [Missing data exploration: highlighting graphical presentation of missing pattern](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4701517/)
 
 
 

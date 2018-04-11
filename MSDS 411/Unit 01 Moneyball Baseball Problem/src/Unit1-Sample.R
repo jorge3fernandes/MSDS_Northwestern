@@ -19,7 +19,7 @@ library(psych)
 #####
 
 
-moneyball= read.csv(file = file.choose(),header=T)
+moneyball = read.csv('/Users/legs_jorge/Documents/Data Science Projects/MSDS_Northwestern/MSDS 411/Unit 01 Moneyball Baseball Problem/Data/moneyball.csv', header = T)
 describe(moneyball)
 
 					  
@@ -205,7 +205,7 @@ mse(model3)
 
 #################### Test Data ##########################
 setwd("D:/RFile/")
-moneyball_test=read.csv("moneyball_test.csv",header=T)
+moneyball_test = read.csv('/Users/legs_jorge/Documents/Data Science Projects/MSDS_Northwestern/MSDS 411/Unit 01 Moneyball Baseball Problem/Data/moneyball_test.csv', header = T)
 
 # Fixing na's
 moneyball_test$TEAM_BATTING_1B <- moneyball_test$TEAM_BATTING_H - moneyball_test$TEAM_BATTING_HR -
