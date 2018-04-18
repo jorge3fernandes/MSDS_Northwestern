@@ -10,7 +10,7 @@ List of Packages used;
  - missForest  
 ```{r message=FALSE}
 library(caret)
-library(corrplot)
+library(psych)
 library(dplyr)
 library(mice) # will be used to impute missing values
 library(VIM)
@@ -22,7 +22,7 @@ library(VIM)
 moneyball = read.csv('/Users/legs_jorge/Documents/Data Science Projects/MSDS_Northwestern/MSDS 411/Unit 01 Moneyball Baseball Problem/Data/moneyball.csv', header = T)
 ```
 
-Let's do a quick analysis to understand the distribution Null values accross our dataset. Let sort the fields with most NA from high to low..
+Let's do a quick analysis to understand the distribution of NA values accross our dataset. Let's sort the fields with most NAs from high to low..
 ```{r message=FALSE}
 #let check for NAs in the data
 #Counting the number of NAs per column and check the percentage of NAs per column
@@ -42,7 +42,7 @@ Before we start the imputation, let's try to understand why we have missing data
  - *MNAR*: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?  
 It would be good to understand exactly what type of missing value we are dealing with.  
 
-Let's use the `mice` package to help us understdant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
+Let's use the `mice` package to help us understant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
 ```{r}
 md.pattern(moneyball) %>% data.frame()
 ```
@@ -80,8 +80,9 @@ upper.panel<-function(x, y){
 pairs(moneyball, 
       lower.panel = panel.cor,
       upper.panel = upper.panel)
+cor.ci(moneyball, method="spearman")
 ```
-
+The Caret package offers the findcorrelation(), which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
 ## Reference
 
  - [Missing data exploration: highlighting graphical presentation of missing pattern](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4701517/)
