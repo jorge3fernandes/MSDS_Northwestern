@@ -1,5 +1,9 @@
 ---
 title: "Moneyball"
+author:
+  - Jorge Fernandes
+  - MSDS 411
+date: "`r format(Sys.time(), '%d %B %Y')`"
 output: html_notebook
 ---
 
@@ -9,20 +13,274 @@ List of Packages used;
  - dplyr  
  - missForest  
 ```{r message=FALSE}
-library(caret)
-library(psych)
+library(e1071) # to understand skewness
 library(dplyr)
-library(mice) # will be used to impute missing values
-library(VIM)
+library(stringr) # Used to rename the columns by removing the word team from the column header
+library(VIM) # To understand NAs
+library(caret)
+library("MASS") # to use for robust Linear Regression.
 ```
 
 
 ```{r}
 # browse to the data
 moneyball = read.csv('/Users/legs_jorge/Documents/Data Science Projects/MSDS_Northwestern/MSDS 411/Unit 01 Moneyball Baseball Problem/Data/moneyball.csv', header = T)
+colnames(moneyball) <- str_replace_all(colnames(moneyball),"TEAM_","") %>% 
+  tolower() # Fixing column names
 ```
 
-Let's do a quick analysis to understand the distribution of NA values accross our dataset. Let's sort the fields with most NAs from high to low..
+
+
+
+## Data Exploration
+
+### Steps
+ 1. Outliers/influencial Points in Independent and Dependent variables
+ 2. Homogeneity
+ 3. Normality of Dependent variable
+ 4. Zero trouble of Dependent variable
+ 5. Collinearity of Independent variables 
+ 6. Relationps Between Independent and Dependent variables 
+ 7. Interactions 
+ 8. Independence of Dependent variable
+ 
+### Step 1: Can we find outliers in our Independent and Dependent variables? 
+
+Outliers can cause our model to produce the wrong output by influencing its fit. 
+Creating boxplots will aid in identifying those outliers.
+We can also use the cleveland dotplot to understand the outliers better. This technique uses the row number against actual value to quickly point out any patterns of outliers. This plot will easilly allow us to check the raw data for errors such as typos during the data collection phase. Points on the far right side, or on the far left side, are observed values that are considerably larger, or smaller, than the majority of the observations, and require further investigation. When we use this chart, together with the box plot and histogram, we can easily identify patterns at to where in the data we're seeing outliers.
+
+```{r}
+par(mfrow = c(1, 3))
+i = 2
+while (i %in% c(2:17)) {
+ 
+plot(moneyball[,i], moneyball$index, xlab = colnames(moneyball)[i] , ylab = "Index", main = paste("cleveland dotplot of ",colnames(moneyball)[i]))
+
+boxplot(moneyball[,i], col = "#A71930", main = paste("Boxplot of ",colnames(moneyball)[i]))
+
+hist(
+  moneyball[,i],
+  col = "#A71930",
+  xlab = colnames(moneyball)[i],
+  main = paste("Histogram of ",colnames(moneyball)[i])
+)
+  i = i + 1
+}
+
+```
+
+
+
+It looks like the outliers are legitmate and we will try two techniques to deal with them;  
+1. Use Robust linear Regression  
+2. Use Spatial Sign transformation after scaling and centering the data.  
+
+Now that step one is done, let's look at step 2.
+
+### Step 2: Are the data normally distributed?
+
+From the historgram above we can clearly see that the data is not normal, with the exception of some that seems to sort of follow a normal distribution.
+Let's use QQ-plot to test each column for normality, while adding a histogram and a Skewness number.   
+ - If skewness is less than −1 or greater than +1, the distribution is highly skewed.  
+ - If skewness is between −1 and −½ or between +½ and +1, the distribution is moderately skewed.  
+ - If skewness is between −½ and +½, the distribution is approximately symmetric.  
+```{r}
+par(mfrow = c(2, 2))
+i = 2
+while (i %in% c(2:17)) {
+  qqnorm(moneyball[,i], main = paste("QQ-Plot of ",colnames(moneyball)[i]));qqline(moneyball[,i], col = 2)
+  
+  hist(
+  moneyball[,i],
+  col = "#A71930",
+  xlab = colnames(moneyball)[i],
+  main = paste0("Skewness = ",skewness(moneyball[,i]))
+)
+  
+  i = i + 1
+  
+}
+
+```
+
+We would need to try certain transformation to correct for Skewness, with Box-Cox being the number one choice.
+
+### Step 4: Are there lots of NAs in the data?
+
+R gives us a lot of ways to understand the distribution of `Nulls` within the data. Let's first try to calculate the percentage of Null values to the total number of observation.
+```{r}
+NAPerc <-
+  sapply(moneyball, function(x)
+    (sum(is.na(x)) / length(x)) * 100) %>%
+  data.frame()
+NAPerc$Column <- rownames(NAPerc)
+colnames(NAPerc) <- c("NA_Perc", "Col_Name")
+
+# Trying to understand the percentage of NAs per Column
+NA_col <- subset(NAPerc, NA_Perc > 0) %>% arrange(desc(NA_Perc))
+NA_col
+NA_subset <- moneyball[, c(NA_col$Col_Name)]
+matrixplot(NA_subset, labels = TRUE, interactive = TRUE)
+```
+
+Let's look at the pattern of missing data to try to get more insights. It's clear that TEAM_BATTING_HBP is going to be a problematic column with 92% of the data missing.
+Before we start the imputation, let's try to understand why we have missing data. 
+
+**There are two types of missing data**  
+
+ - *MCAR*: missing completely at random. This is the desirable scenario in case of missing data.  
+ - *MNAR*: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?  
+It would be good to understand exactly what type of missing value we are dealing with.  
+
+Let's use the `mice` package to help us understant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
+```{r}
+md.pattern(moneyball) %>% data.frame()
+```
+
+The **first column** of the output shows the number of unique missing data patterns. There are 191 observations with nonmissing values, and there are 1295 observations with nonmissing values except for the variable batting_hbp. The **rightmost column** shows the number of *missing variables* in a particular missing pattern. For example, the first row has no missing value and it is “0” in the row. The **last row** counts the number of missing values for each variable. For example, the variable pitching_bb contains no missing values and the variable batting_so contains 102 missing values. This table can be helpful when you decide to drop some observations with missing variables exceeding a preset threshold.
+
+
+After doing some reading it looks like that columns could be translated to a 0 or 1. I need to do more investigating.
+From working experience, usually columns with high volumes of NAs indicates important informations, simply because they could be capturing rare instance where a process fails. Instead of deleting it, I will try to see if I can transform it into a categorical variable with 1s and 0s. Now, regarding the other one, I will try some other inputation methods such as KNN, mean, median, etc.
+
+
+
+### Step 5: Is there collinearity among the covariates?
+
+Let's create a series of scatter plots to understand how each independent variable interacts with the dependent variable. These scatter plots will help us spot any infrigement of the assupmtions needed to develop a robust OLS model, namely multicollinearity.
+
+
+```{r warning = FALSE}
+chart.Correlation(moneyball, histogram = TRUE, pch = 1, method = c("pearson"))
+```
+
+In the above plot:
+
+The distribution of each variable is shown on the diagonal.
+On the bottom of the diagonal : the bivariate scatter plots
+with a fitted line displayed on the top of the diagonal: the value of the correlation plus the significance level as stars.
+Each significance level is associated to a symbol: p-values(0, 0.001, 0.01, 0.05, 0.1, 1) <=> symbols(“***”, “**”, “*”, “.”, " “)
+
+As we go across the second row, we notice that variables aren't strongly correlated to our target variable. One can also notice correlation numbers up to 0.97 among our independent variables. Those variables will pose a problem when you include them in a model.
+
+The Caret package offers the findcorrelation(), which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
+```{r}
+paste0("Need to exclude ", colnames(moneyball)[findCorrelation(cor(moneyball))])
+```
+We will need to revisit this after we have imputed/taken care of Nulls.
+
+## Data Transformation
+
+Before we start scaling, centering, or apply any other modification to the dataset, let make sure we have taken care of the null values.
+Let's first focus on the columns with the highest volume of nulls, `batting_hbp`.
+
+For this column we will try to transform it into a binary variable, 1s and 0s. I don't understand baseball, but it seems that this variable is not missing at random, so we could simple say Hitt by pitch or not. I will also see if imputation using the `MICE` package will help in any way.
+
+```{r}
+moneyball_trans <- moneyball
+batting_hbp_bi <- ifelse(is.na(moneyball_trans$batting_hbp),0,1) 
+moneyball_trans <- subset(moneyball_trans, select = -c(batting_hbp)) # Dropping the variable we just transformed. 
+
+```
+
+Now that that variable is taken care of, let's start imputing missing values using mice. Since we only have numeric values, mice will automatically chose PMM (Predictive Mean Matching)
+
+
+```{r message = FALSE}
+mice_imputes <- mice(moneyball_trans, m = 5, maxit = 40)
+#What methods were used for imputing
+method <- mice_imputes$method
+# I only have numeric values, mice chose PMM (Predictive Mean Matching)
+
+#Imputed dataset
+moneyball_trans <- complete(mice_imputes, 5)
+moneyball_trans$batting_hbp_bi <- batting_hbp_bi
+```
+
+
+Now that we have imputed the data, let's do a quick summary of the data to see how it looks like.
+```{r}
+summary(moneyball_trans)
+```
+
+let's test a model to establish a baseline
+
+```{r}
+base_model <- lm(target_wins ~., data = moneyball_trans)
+stepwise_base_model <- stepAIC(base_model, direction = "both")
+robust_base_model <- rlm(target_wins ~., data = moneyball_trans)
+summary(stepwise_base_model)
+summary(base_model)
+summary(robust_base_model)
+mse <- function(sm) 
+  mean(sm$residuals^2)
+
+mse(stepwise_base_model)
+mse(base_model)
+mse(robust_base_model)
+```
+
+Let's use `caret` preprocess function to help us fix the issues we found while exploring the data.
+
+First, we will use box-cox to normalize the data.
+
+```{r}
+processed <- mutate_all(moneyball_trans[,1], function(x) as.numeric(as.character(x)))
+  # making a copy without the index column so I don't losse previous steps
+
+trans <- preProcess(processed, method = "BoxCox")
+transformed <- predict(trans, processed)
+box_test <- BoxCoxTrans(processed$fielding_e)
+hist(predict(box_test,processed$fielding_e))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+First we start with a quick ana
+Let's do a quick analysis to understand the distribution of NA values accross our dataset. Let's sort the fields with most NAs from high to low.
+
 ```{r message=FALSE}
 #let check for NAs in the data
 #Counting the number of NAs per column and check the percentage of NAs per column
@@ -46,11 +304,7 @@ Let's use the `mice` package to help us understant how all the NAs behave in the
 ```{r}
 md.pattern(moneyball) %>% data.frame()
 ```
-The **first column** of the output shows the number of unique missing data patterns. There are 191 observations with nonmissing values, and there are 1295 observations with nonmissing values except for the variable TEAM_BATTING_HBP. The **rightmost column** shows the number of *missing variables* in a particular missing pattern. For example, the first row has no missing value and it is “0” in the row. The **last row** counts the number of missing values for each variable. For example, the variable TEAM_PITCHING_BB contains no missing values and the variable TEAM_BATTING_SO contains 102 missing values. This table can be helpful when you decide to drop some observations with missing variables exceeding a preset threshold.
 
-
-After doing some reading it looks like that columns could be translated to a 0 or 1. I need to do more investigating.
-From working experience, usually columns with high volumes of NAs indicates important informations, simply because they could be capturing rare instance where a process fails. Instead of deleting it, I will try to see if I can transform it into a categorical variable with 1s and 0s. Now, regarding the other one, I will try some other inputation methods such as KNN, mean, median, etc.
 [Here](https://www.r-bloggers.com/imputing-missing-data-with-r-mice-package/) is a great article from Rblogger that discusses the package [MICE](https://cran.r-project.org/web/packages/mice/mice.pdf).
 
 
