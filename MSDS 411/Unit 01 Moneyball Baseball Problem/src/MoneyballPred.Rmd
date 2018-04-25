@@ -1,24 +1,24 @@
 ---
 title: "Moneyball"
 author:
-  - Jorge Fernandes
-  - MSDS 411
-date: "`r format(Sys.time(), '%d %B %Y')`"
-output: html_notebook
+- Jorge Fernandes
+- MSDS 411
+date: "24 April 2018"
+output:
+  word_document: default
+  pdf_document: default
+  html_notebook: default
 ---
 
-List of Packages used;  
- - caret  
- - corrplot  
- - dplyr  
- - missForest  
 ```{r message=FALSE}
 library(e1071) # to understand skewness
 library(dplyr)
 library(stringr) # Used to rename the columns by removing the word team from the column header
 library(VIM) # To understand NAs
 library(caret)
-library("MASS") # to use for robust Linear Regression.
+library(mice)
+library(MASS) # to use for robust Linear Regression.
+
 ```
 
 
@@ -29,20 +29,19 @@ colnames(moneyball) <- str_replace_all(colnames(moneyball),"TEAM_","") %>%
   tolower() # Fixing column names
 ```
 
+## Introduction
+
+The moneyball dataset has sparked many companies, teams, and organizations to understand and utilize the data they generate/gather. This project highlights many pitfalls that those same individuals fall into simply because they forgot to do the due diligence and prepare the data before modeling.  
+This paper will focus on;  
+  1. Data Exploration  
+  2. Data Transformation  
+  3. Model Building  
+  4. How to select the best model  
 
 
 
 ## Data Exploration
 
-### Steps
- 1. Outliers/influencial Points in Independent and Dependent variables
- 2. Homogeneity
- 3. Normality of Dependent variable
- 4. Zero trouble of Dependent variable
- 5. Collinearity of Independent variables 
- 6. Relationps Between Independent and Dependent variables 
- 7. Interactions 
- 8. Independence of Dependent variable
  
 ### Step 1: Can we find outliers in our Independent and Dependent variables? 
 
@@ -72,9 +71,7 @@ hist(
 
 
 
-It looks like the outliers are legitmate and we will try two techniques to deal with them;  
-1. Use Robust linear Regression  
-2. Use Spatial Sign transformation after scaling and centering the data.  
+It looks like the outliers are legitmate and we will try Spatial Sign transformation to deal with them.
 
 Now that step one is done, let's look at step 2.
 
@@ -106,7 +103,7 @@ while (i %in% c(2:17)) {
 
 We would need to try certain transformation to correct for Skewness, with Box-Cox being the number one choice.
 
-### Step 4: Are there lots of NAs in the data?
+### Step 3: Are there lots of NAs in the data?
 
 R gives us a lot of ways to understand the distribution of `Nulls` within the data. Let's first try to calculate the percentage of Null values to the total number of observation.
 ```{r}
@@ -120,18 +117,10 @@ colnames(NAPerc) <- c("NA_Perc", "Col_Name")
 # Trying to understand the percentage of NAs per Column
 NA_col <- subset(NAPerc, NA_Perc > 0) %>% arrange(desc(NA_Perc))
 NA_col
-NA_subset <- moneyball[, c(NA_col$Col_Name)]
-matrixplot(NA_subset, labels = TRUE, interactive = TRUE)
 ```
 
-Let's look at the pattern of missing data to try to get more insights. It's clear that TEAM_BATTING_HBP is going to be a problematic column with 92% of the data missing.
-Before we start the imputation, let's try to understand why we have missing data. 
-
-**There are two types of missing data**  
-
- - *MCAR*: missing completely at random. This is the desirable scenario in case of missing data.  
- - *MNAR*: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?  
-It would be good to understand exactly what type of missing value we are dealing with.  
+Let's look at the pattern of missing data to try to get more insights. It's clear that batting_hbp is going to be a problematic column with 92% of the data missing.
+Before we start the imputation or deleting variables, let's try to understand why we have missing data. 
 
 Let's use the `mice` package to help us understant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
 ```{r}
@@ -140,206 +129,234 @@ md.pattern(moneyball) %>% data.frame()
 
 The **first column** of the output shows the number of unique missing data patterns. There are 191 observations with nonmissing values, and there are 1295 observations with nonmissing values except for the variable batting_hbp. The **rightmost column** shows the number of *missing variables* in a particular missing pattern. For example, the first row has no missing value and it is “0” in the row. The **last row** counts the number of missing values for each variable. For example, the variable pitching_bb contains no missing values and the variable batting_so contains 102 missing values. This table can be helpful when you decide to drop some observations with missing variables exceeding a preset threshold.
 
-
-After doing some reading it looks like that columns could be translated to a 0 or 1. I need to do more investigating.
-From working experience, usually columns with high volumes of NAs indicates important informations, simply because they could be capturing rare instance where a process fails. Instead of deleting it, I will try to see if I can transform it into a categorical variable with 1s and 0s. Now, regarding the other one, I will try some other inputation methods such as KNN, mean, median, etc.
-
-
-
-### Step 5: Is there collinearity among the covariates?
-
-Let's create a series of scatter plots to understand how each independent variable interacts with the dependent variable. These scatter plots will help us spot any infrigement of the assupmtions needed to develop a robust OLS model, namely multicollinearity.
-
-
-```{r warning = FALSE}
-chart.Correlation(moneyball, histogram = TRUE, pch = 1, method = c("pearson"))
-```
-
-In the above plot:
-
-The distribution of each variable is shown on the diagonal.
-On the bottom of the diagonal : the bivariate scatter plots
-with a fitted line displayed on the top of the diagonal: the value of the correlation plus the significance level as stars.
-Each significance level is associated to a symbol: p-values(0, 0.001, 0.01, 0.05, 0.1, 1) <=> symbols(“***”, “**”, “*”, “.”, " “)
-
-As we go across the second row, we notice that variables aren't strongly correlated to our target variable. One can also notice correlation numbers up to 0.97 among our independent variables. Those variables will pose a problem when you include them in a model.
-
-The Caret package offers the findcorrelation(), which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
-```{r}
-paste0("Need to exclude ", colnames(moneyball)[findCorrelation(cor(moneyball))])
-```
-We will need to revisit this after we have imputed/taken care of Nulls.
-
-## Data Transformation
-
-Before we start scaling, centering, or apply any other modification to the dataset, let make sure we have taken care of the null values.
-Let's first focus on the columns with the highest volume of nulls, `batting_hbp`.
-
-For this column we will try to transform it into a binary variable, 1s and 0s. I don't understand baseball, but it seems that this variable is not missing at random, so we could simple say Hitt by pitch or not. I will also see if imputation using the `MICE` package will help in any way.
+After careful analysis, the decision is to keep `batting_hbp`. Because I want to transform it into a binary variable, I will keep it out until all th eimputation is done.
 
 ```{r}
-moneyball_trans <- moneyball
-batting_hbp_bi <- ifelse(is.na(moneyball_trans$batting_hbp),0,1) 
-moneyball_trans <- subset(moneyball_trans, select = -c(batting_hbp)) # Dropping the variable we just transformed. 
-
+batting_hbp_bi <- if_else(is.na(moneyball$batting_hbp),0,1)
+batting_hbp <- moneyball$batting_hbp
+moneyball_trans <- subset(moneyball, select = -c(batting_hbp))
 ```
 
-Now that that variable is taken care of, let's start imputing missing values using mice. Since we only have numeric values, mice will automatically chose PMM (Predictive Mean Matching)
+
+Let's impute and treat the data for missing values before testing it for multicollinearity.
+
+The `mice` package will be the package used to help us with this task. Since we only have numeric values, mice will automatically chose PMM (Predictive Mean Matching) as the method. A great resource to understand this techinique is found [here](https://statisticalhorizons.com/predictive-mean-matching).
 
 
-```{r message = FALSE}
-mice_imputes <- mice(moneyball_trans, m = 5, maxit = 40)
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+mice_imputes <- mice(moneyball_trans, m = 10, maxit = 40)
 #What methods were used for imputing
 method <- mice_imputes$method
 # I only have numeric values, mice chose PMM (Predictive Mean Matching)
 
 #Imputed dataset
-moneyball_trans <- complete(mice_imputes, 5)
-moneyball_trans$batting_hbp_bi <- batting_hbp_bi
+moneyball_imp <- complete(mice_imputes, 10)
 ```
 
 
-Now that we have imputed the data, let's do a quick summary of the data to see how it looks like.
+Let's add `batting_hbp` back into the data.
+
 ```{r}
-summary(moneyball_trans)
+moneyball_imp$batting_hbp <- batting_hbp
+moneyball_imp$batting_hbp_bi <- batting_hbp_bi
+
+
 ```
 
-let's test a model to establish a baseline
+
+### Step 4: Is there collinearity among the covariates?
+
+Let's create a series of correlation matix to understand how each independent variable interacts with the dependent variable. This correlation matix will help us spot any infrigement of the assupmtions needed to develop a robust OLS model, namely multicollinearity. The `caret` package can help the user find those pairs and even suggest which one to remove.
+
+The Caret package offers the `findcorrelation()`, which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
+```{r}
+colnames(moneyball_imp)[findCorrelation(cor(moneyball_imp))]
+```
+
+## Data Transformation
+
+Let's introduce new variables through transformation:
+
+1. `batting_1B = batting_h-(batting_2b + batting_3b + batting_hr)`
+2. `free_bases_num = batting_hbp + batting_bb`
+3. `total_bases = batting_1B + 2 * batting_2b + 3 * batting_3b + 4 * batting_hr + batting_bb + batting_hbp + baserun_sb`
+4. `total_bases_allowed = pitching_bb + 4 * pitching_hr + pitching_h`
+5. `HR_over_OP = batting_hr - pitching_hr`
+6. `walks_over_OP = batting_bb - pitching_bb`
+7. `SO_over_OP = pitching_so - batting_so`
 
 ```{r}
-base_model <- lm(target_wins ~., data = moneyball_trans)
-stepwise_base_model <- stepAIC(base_model, direction = "both")
-robust_base_model <- rlm(target_wins ~., data = moneyball_trans)
-summary(stepwise_base_model)
-summary(base_model)
-summary(robust_base_model)
+moneyball_imp$batting_1B <- moneyball_imp$batting_h-(moneyball_imp$batting_2b + moneyball_imp$batting_3b + moneyball_imp$batting_hr)
+moneyball_imp$free_bases_num <-  if_else(is.na(moneyball_imp$batting_hbp),0,as.numeric(moneyball_imp$batting_hbp)) + moneyball_imp$batting_bb
+moneyball_imp$total_bases <- moneyball_imp$batting_1B + 2 * moneyball_imp$batting_2b + 3 * moneyball_imp$batting_3b + 4 * moneyball_imp$batting_hr + moneyball_imp$batting_bb + if_else(is.na(moneyball_imp$batting_hbp),0,as.numeric(moneyball_imp$batting_hbp)) + moneyball_imp$baserun_sb
+moneyball_imp$total_bases_allowed = moneyball_imp$pitching_bb + 4 * moneyball_imp$pitching_hr + moneyball_imp$pitching_h
+moneyball_imp$HR_over_OP = moneyball_imp$batting_hr - moneyball_imp$pitching_hr
+moneyball_imp$walks_over_OP = moneyball_imp$batting_bb - moneyball_imp$pitching_bb
+moneyball_imp$SO_over_OP = moneyball_imp$pitching_so - moneyball_imp$batting_so
+# make alist of predictors and format them
+
+colnames(moneyball_imp)
+pred_list <-
+  "index + target_wins + batting_h + batting_2b + batting_3b + batting_hr +
+batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr +
+pitching_bb + pitching_so + fielding_e + fielding_dp + batting_hbp + batting_hbp_bi +
+batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP"
+#keep the new variables in a vector for texting later, in cae they don't prove to be of any value.
+new_var <- c("batting_1B","free_bases_num","total_bases","total_bases_allowed","HR_over_OP","walks_over_OP","SO_over_OP")
+```
+
+Now that we have imputed and created new variables, let's look at the correlation matrix to understand the correlation between the variables and the traget_wins
+
+```{r}
+moneyball_imp <- subset(moneyball_imp, select = -c(batting_hbp))
+cor(moneyball_imp)
+```
+
+## Build a Model
+
+Let's test a model to establish a baseline
+
+```{r }
+str(moneyball_imp)
+base_model_all <- lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_hr + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp + batting_hbp + batting_hbp_bi + batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = moneyball_imp)
+par(mfrow=c(2,2))
+plot(base_model_all)
+summary(base_model_all)
 mse <- function(sm) 
   mean(sm$residuals^2)
 
-mse(stepwise_base_model)
-mse(base_model)
-mse(robust_base_model)
+paste('MSE equal ', mse(base_model_all))
 ```
+Though R-squared and adjusted R-square is high, we can clearly see that this model dropping observations. Let's try to forget about the new additions, and build a model without them.
 
-Let's use `caret` preprocess function to help us fix the issues we found while exploring the data.
-
-First, we will use box-cox to normalize the data.
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+moneyball_orig <- moneyball_imp[,1:17]
+base_model_orig <-
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_hr + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
+  par(mfrow = c(2, 2))
+  plot(base_model_orig)
+  summary(base_model_orig)
+  paste('MSE equal ', mse(base_model_orig))
+```
+This model looks good, from a performance point of view(r2), but when I look at the variance of the residual I don't feel secure.  
+Let's build another model including lon those with low p-Values.
 
 ```{r}
-processed <- mutate_all(moneyball_trans[,1], function(x) as.numeric(as.character(x)))
-  # making a copy without the index column so I don't losse previous steps
-
-trans <- preProcess(processed, method = "BoxCox")
-transformed <- predict(trans, processed)
-box_test <- BoxCoxTrans(processed$fielding_e)
-hist(predict(box_test,processed$fielding_e))
+base_model_lp <-
+  lm(target_wins ~ batting_h + batting_2b + batting_hr + batting_bb + batting_so + baserun_sb + pitching_h + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
+  par(mfrow = c(2, 2))
+  plot(base_model_lp)
+  summary(base_model_lp)
+  paste('MSE equal ', mse(base_model_lp))
 ```
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-First we start with a quick ana
-Let's do a quick analysis to understand the distribution of NA values accross our dataset. Let's sort the fields with most NAs from high to low.
-
-```{r message=FALSE}
-#let check for NAs in the data
-#Counting the number of NAs per column and check the percentage of NAs per column
-NAPerc <- sapply(moneyball, function(x) (sum(is.na(x))/length(x))*100) %>%
-  data.frame()
-NAPerc$Column <- rownames(NAPerc)
-colnames(NAPerc) <- c("NA_Perc", "Col_Name")
-subset(NAPerc,NA_Perc > 0) %>% arrange(desc(NA_Perc))
-matrixplot(moneyball)
-```
-It's clear that TEAM_BATTING_HBP is going to be a problematic column with 92% of the data missing.
-Before we start the imputation, let's try to understand why we have missing data. 
-
-**There are two types of missing data**  
-
- - *MCAR*: missing completely at random. This is the desirable scenario in case of missing data.  
- - *MNAR*: missing not at random. Missing not at random data is a more serious issue and in this case it might be wise to check the data gathering process further and try to understand why the information is missing. For instance, if most of the people in a survey did not answer a certain question, why did they do that? Was the question unclear?  
-It would be good to understand exactly what type of missing value we are dealing with.  
-
-Let's use the `mice` package to help us understant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
+Lets remove variables causing multicollinearity using `findCorrelation()`.
 ```{r}
-md.pattern(moneyball) %>% data.frame()
+to_rm <- colnames(cor(moneyball_imp)[,findCorrelation(cor(moneyball_imp))])
+to_rm
 ```
-
-[Here](https://www.r-bloggers.com/imputing-missing-data-with-r-mice-package/) is a great article from Rblogger that discusses the package [MICE](https://cran.r-project.org/web/packages/mice/mice.pdf).
-
-
-
-### Let the Inputation begin
 
 ```{r}
-moneyball[is.na(moneyball) == TRUE] <- 0
-mball_cor <- cor(moneyball)
-corrplot(mball_cor, method="number")
+base_model_noCol <-
+  lm(target_wins ~ batting_h + batting_2b + batting_bb + batting_so + baserun_sb + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
+  par(mfrow = c(2, 2))
+  plot(base_model_noCol)
+  summary(base_model_noCol)
+  paste('MSE equal ', mse(base_model_noCol))
+```
+Though the rsquared value went down, there are some improvements on the Cook's distance chart.
+Now let's try to use use the `caret` package to apply the transformations we discussed earlier in our exploration phase.  
 
+1. Center and Scale the data
+2. Fix the the problem with outliers by using spatial sign Transformation  
+3. Last but not least a boxcox transformation to take car of the skewness   
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+trans <- preProcess(moneyball_imp, method = c("BoxCox"))
+transformed <- predict(trans, moneyball_imp)
+head(transformed)
 
-# Correlation panel
-panel.cor <- function(x, y){
-    usr <- par("usr"); on.exit(par(usr))
-    par(usr = c(0, 1, 0, 1))
-    r <- round(cor(x, y), digits=2)
-    txt <- paste0("R = ", r)
-    cex.cor <- 0.8/strwidth(txt)
-    text(0.5, 0.5, txt, cex = cex.cor * r)
+trans_model_all <-
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = transformed)
+  par(mfrow = c(2, 2))
+  plot(trans_model_all)
+  summary(trans_model_all)
+  
+  paste('MSE equal ', mse(trans_model_all))
+  
+```
+
+```{r}
+par(mfrow = c(1, 3))
+i = 2
+while (i %in% c(2:17)) {
+ 
+plot(transformed[,i], transformed$index, xlab = colnames(transformed)[i] , ylab = "Index", main = paste("cleveland dotplot of ",colnames(transformed)[i]))
+
+boxplot(transformed[,i], col = "#A71930", main = paste("Boxplot of ",colnames(transformed)[i]))
+
+hist(
+  transformed[,i],
+  col = "#A71930",
+  xlab = colnames(transformed)[i],
+  main = paste("Histogram of ",colnames(transformed)[i])
+)
+  i = i + 1
 }
-# Customize upper panel
-upper.panel<-function(x, y){
-  points(x,y, pch = 19)
-}
-# Create the plots
-pairs(moneyball, 
-      lower.panel = panel.cor,
-      upper.panel = upper.panel)
-cor.ci(moneyball, method="spearman")
 ```
-The Caret package offers the findcorrelation(), which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
-## Reference
+Looking at Cook's Distance, it's clear that we have influential data, but the other charts look right where they should be.
 
- - [Missing data exploration: highlighting graphical presentation of missing pattern](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4701517/)
+Let's try, stepwise approach.
+1. Both direction
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_bd <- stepAIC(trans_model_all, direction = "both")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_bd)
+  summary(stepwise_base_model_bd)
+paste('MSE equal ', mse(stepwise_base_model_bd))
+```
+
+2. Forward direction
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_fw <- stepAIC(trans_model_all, direction = "forward")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_fw)
+  summary(stepwise_base_model_fw)
+paste('MSE equal ', mse(stepwise_base_model_fw))
+```
+
+
+3. Backwards direction
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_bw <- stepAIC(trans_model_all, direction = "backward")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_bw)
+  summary(stepwise_base_model_bw)
+paste('MSE equal ', mse(stepwise_base_model_bw))
+```
+
+
+## Conclusion
+
+It definitely made a difference when the transformation were applied. One can see the difference in the residual plots. The residual is now normal(per QQ plot), and there are no patterns when we look at he Rsiduals Vs Fitted plot.
+When looking at the Rsquared and Adjusted Rsquared together with the residual plots, it's easy to conclude that the model with the stepwise approach together with the transformations is the one that leads to a better model.
+
+Though RMSE and Rsquared from the other models seem to suggest otherwise, the stepwise model appears to be more stable. I also noticed by looking at the Cook's Distance plot that there are influncial observations, but for some reason I could not get robust regression to work. From my understanding, robust regression would put less enphasis on those data points, leading to a more accurate model.
+
+
+
+
+
+
+
+
+
+
+
 
 
 
