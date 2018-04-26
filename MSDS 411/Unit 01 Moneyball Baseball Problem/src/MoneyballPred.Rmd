@@ -378,6 +378,36 @@ base_model_orig_rm <-
   summary(base_model_orig_rm)
   paste('MSE equal ', mse(base_model_orig_rm))
 ```
+1. Stepwise Both direction
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_orig_rm <- stepAIC(base_model_orig_rm, direction = "both")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_orig_rm)
+  summary(stepwise_base_model_orig_rm)
+paste('MSE equal ', mse(stepwise_base_model_orig_rm))
+```
+
+1. Stepwise Forward direction
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+forward_base_model_orig_rm <- stepAIC(base_model_orig_rm, direction = "forward")
+
+par(mfrow = c(2, 2))
+  plot(forward_base_model_orig_rm)
+  summary(forward_base_model_orig_rm)
+paste('MSE equal ', mse(forward_base_model_orig_rm))
+```
+
+1. Stepwise Backwards direction
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+backward_base_model_orig_rm <- stepAIC(base_model_orig_rm, direction = "backward")
+
+par(mfrow = c(2, 2))
+  plot(backward_base_model_orig_rm)
+  summary(backward_base_model_orig_rm)
+paste('MSE equal ', mse(backward_base_model_orig_rm))
+```
+
 
 ```{r}
 base_model_lp_rm <-
