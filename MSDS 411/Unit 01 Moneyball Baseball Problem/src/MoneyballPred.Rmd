@@ -16,7 +16,8 @@ library(dplyr)
 library(stringr) # Used to rename the columns by removing the word team from the column header
 library(VIM) # To understand NAs
 library(caret)
-library(mice)
+library(mice) # Imputation 
+library(missForest) # Imputation 
 library(MASS) # to use for robust Linear Regression.
 
 ```
@@ -38,72 +39,9 @@ This paper will focus on;
   3. Model Building  
   4. How to select the best model  
 
-
-
 ## Data Exploration
 
- 
-### Step 1: Can we find outliers in our Independent and Dependent variables? 
-
-Outliers can cause our model to produce the wrong output by influencing its fit. 
-Creating boxplots will aid in identifying those outliers.
-We can also use the cleveland dotplot to understand the outliers better. This technique uses the row number against actual value to quickly point out any patterns of outliers. This plot will easilly allow us to check the raw data for errors such as typos during the data collection phase. Points on the far right side, or on the far left side, are observed values that are considerably larger, or smaller, than the majority of the observations, and require further investigation. When we use this chart, together with the box plot and histogram, we can easily identify patterns at to where in the data we're seeing outliers.
-
-```{r}
-par(mfrow = c(1, 3))
-i = 2
-while (i %in% c(2:17)) {
- 
-plot(moneyball[,i], moneyball$index, xlab = colnames(moneyball)[i] , ylab = "Index", main = paste("cleveland dotplot of ",colnames(moneyball)[i]))
-
-boxplot(moneyball[,i], col = "#A71930", main = paste("Boxplot of ",colnames(moneyball)[i]))
-
-hist(
-  moneyball[,i],
-  col = "#A71930",
-  xlab = colnames(moneyball)[i],
-  main = paste("Histogram of ",colnames(moneyball)[i])
-)
-  i = i + 1
-}
-
-```
-
-
-
-It looks like the outliers are legitmate and we will try Spatial Sign transformation to deal with them.
-
-Now that step one is done, let's look at step 2.
-
-### Step 2: Are the data normally distributed?
-
-From the historgram above we can clearly see that the data is not normal, with the exception of some that seems to sort of follow a normal distribution.
-Let's use QQ-plot to test each column for normality, while adding a histogram and a Skewness number.   
- - If skewness is less than −1 or greater than +1, the distribution is highly skewed.  
- - If skewness is between −1 and −½ or between +½ and +1, the distribution is moderately skewed.  
- - If skewness is between −½ and +½, the distribution is approximately symmetric.  
-```{r}
-par(mfrow = c(2, 2))
-i = 2
-while (i %in% c(2:17)) {
-  qqnorm(moneyball[,i], main = paste("QQ-Plot of ",colnames(moneyball)[i]));qqline(moneyball[,i], col = 2)
-  
-  hist(
-  moneyball[,i],
-  col = "#A71930",
-  xlab = colnames(moneyball)[i],
-  main = paste0("Skewness = ",skewness(moneyball[,i]))
-)
-  
-  i = i + 1
-  
-}
-
-```
-
-We would need to try certain transformation to correct for Skewness, with Box-Cox being the number one choice.
-
-### Step 3: Are there lots of NAs in the data?
+### Step 1: Are there lots of NAs in the data?
 
 R gives us a lot of ways to understand the distribution of `Nulls` within the data. Let's first try to calculate the percentage of Null values to the total number of observation.
 ```{r}
@@ -123,13 +61,13 @@ Let's look at the pattern of missing data to try to get more insights. It's clea
 Before we start the imputation or deleting variables, let's try to understand why we have missing data. 
 
 Let's use the `mice` package to help us understant how all the NAs behave in the data. `mice` provides a handy function called `md.pattern` that allows one to understand the pattern of missing data. Hopefully by looking at the pattern, we can have an idea on why the data could be missing.
-```{r}
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 md.pattern(moneyball) %>% data.frame()
 ```
 
 The **first column** of the output shows the number of unique missing data patterns. There are 191 observations with nonmissing values, and there are 1295 observations with nonmissing values except for the variable batting_hbp. The **rightmost column** shows the number of *missing variables* in a particular missing pattern. For example, the first row has no missing value and it is “0” in the row. The **last row** counts the number of missing values for each variable. For example, the variable pitching_bb contains no missing values and the variable batting_so contains 102 missing values. This table can be helpful when you decide to drop some observations with missing variables exceeding a preset threshold.
 
-After careful analysis, the decision is to keep `batting_hbp`. Because I want to transform it into a binary variable, I will keep it out until all th eimputation is done.
+After careful analysis, the decision is to keep `batting_hbp`. Because I want to transform it into a binary variable, and will keep it out until all the imputation is done.
 
 ```{r}
 batting_hbp_bi <- if_else(is.na(moneyball$batting_hbp),0,1)
@@ -140,28 +78,93 @@ moneyball_trans <- subset(moneyball, select = -c(batting_hbp))
 
 Let's impute and treat the data for missing values before testing it for multicollinearity.
 
-The `mice` package will be the package used to help us with this task. Since we only have numeric values, mice will automatically chose PMM (Predictive Mean Matching) as the method. A great resource to understand this techinique is found [here](https://statisticalhorizons.com/predictive-mean-matching).
+The `missForest` package will be the package used to help us with this task. `missForest` is an implementation of random forest algorithm. It’s a non parametric imputation method applicable to various variable types. A great resource to understand this techinique is found [here](https://www.analyticsvidhya.com/blog/2016/03/tutorial-powerful-packages-imputing-missing-values/).
 
 
-```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
-mice_imputes <- mice(moneyball_trans, m = 10, maxit = 40)
-#What methods were used for imputing
-method <- mice_imputes$method
-# I only have numeric values, mice chose PMM (Predictive Mean Matching)
+```{r Imputation Step, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
 
-#Imputed dataset
-moneyball_imp <- complete(mice_imputes, 10)
+#Let's try the missForest Package
+#impute missing values, using all parameters as default values
+moneyball_MF <- missForest(moneyball_trans)$ximp
+
+#check imputation error
+moneyball_MF$OOBerror
 ```
 
 
 Let's add `batting_hbp` back into the data.
 
 ```{r}
-moneyball_imp$batting_hbp <- batting_hbp
-moneyball_imp$batting_hbp_bi <- batting_hbp_bi
 
+moneyball_MF$batting_hbp <- if_else(is.na(batting_hbp),0,as.numeric(batting_hbp))
+moneyball_MF$batting_hbp_bi <- batting_hbp_bi
 
 ```
+
+ 
+### Step 2: Can we find outliers in our Independent and Dependent variables? 
+
+Outliers can cause our model to produce the wrong output by influencing its fit. 
+Creating boxplots will aid in identifying those outliers.
+We can also use the cleveland dotplot to understand the outliers better. This technique uses the row number against actual value to quickly point out any patterns of outliers. This plot will easilly allow us to check the raw data for errors such as typos during the data collection phase. Points on the far right side, or on the far left side, are observed values that are considerably larger, or smaller, than the majority of the observations, and require further investigation. When we use this chart, together with the box plot and histogram, we can easily identify patterns at to where in the data we're seeing outliers.
+
+```{r}
+
+
+par(mfrow = c(1, 3))
+i = 2
+while (i %in% c(2:17)) {
+out.lier <- boxplot.stats(moneyball_MF[,i])$out
+plot(moneyball_MF$target_wins, moneyball_MF[,i],col=ifelse(moneyball_MF[,i] %in% out.lier, "red", "blue"),  xlab = colnames(moneyball_MF)[i] , ylab = "Target Wins", main = paste("Scatter Plot of ",colnames(moneyball_MF)[i]))
+  
+boxplot(moneyball_MF[,i], col = "#A71930", main = paste("Boxplot of ",colnames(moneyball_MF)[i]))
+
+title(sub = paste0("Number of Outliers = ", length(boxplot.stats(moneyball_MF[,i])$out)))
+
+hist(
+  moneyball_MF[,i],
+  col = "#A71930",
+  xlab = colnames(moneyball_MF)[i],
+  main = paste("Histogram of ",colnames(moneyball_MF)[i])
+)
+  i = i + 1
+}
+
+```
+
+
+
+It looks like the outliers are going to be a problem for this model. Multiple techniques will be used to remediate this issue.
+
+Now that step one is done, let's take a look at step 2.
+
+### Step 3: Are the data normally distributed?
+
+From the histogram above, we clearly see the data is not normal, with the exception of some that seems to sort of follow a normal distribution.
+Let's use QQ-plot to test each column for normality, while adding a histogram and a Skewness number.   
+ - If skewness is less than −1 or greater than +1, the distribution is highly skewed.  
+ - If skewness is between −1 and −½ or between +½ and +1, the distribution is moderately skewed.  
+ - If skewness is between −½ and +½, the distribution is approximately symmetric.  
+```{r}
+par(mfrow = c(2, 2))
+i = 2
+while (i %in% c(2:18)) {
+  qqnorm(moneyball_MF[,i], main = paste("QQ-Plot of ",colnames(moneyball_MF)[i]));qqline(moneyball_MF[,i], col = 2)
+  
+  hist(
+  moneyball_MF[,i],
+  col = "#A71930",
+  xlab = colnames(moneyball_MF)[i],
+  main = paste0("Skewness = ",skewness(moneyball_MF[,i]))
+)
+  
+  i = i + 1
+  
+}
+
+```
+
+We would need to try certain transformation to correct for Skewness, with Box-Cox being the number one choice.QQ-plots are a great way to quickly gauge the normality of the variables.
 
 
 ### Step 4: Is there collinearity among the covariates?
@@ -170,9 +173,9 @@ Let's create a series of correlation matix to understand how each independent va
 
 The Caret package offers the `findcorrelation()`, which takes the correlation matrix as an input and finds the fields causing multicollinearity based on a threshold, the `cutoff` parameter. It in turns returns a vector with values that would need to be removed from our dataset due to correlation. 
 ```{r}
-colnames(moneyball_imp)[findCorrelation(cor(moneyball_imp))]
+colnames(moneyball_MF)[findCorrelation(cor(moneyball_MF))]
 ```
-
+Per caret's suggestion, we need to remove two variables in order to deal with the multicollinearity issue, `batting_hr and batting_hbp`. We will keep that in mind for when we start the data transformation phase. For now, let's keep them since we need them for more feature engineering.
 ## Data Transformation
 
 Let's introduce new variables through transformation:
@@ -186,16 +189,14 @@ Let's introduce new variables through transformation:
 7. `SO_over_OP = pitching_so - batting_so`
 
 ```{r}
-moneyball_imp$batting_1B <- moneyball_imp$batting_h-(moneyball_imp$batting_2b + moneyball_imp$batting_3b + moneyball_imp$batting_hr)
-moneyball_imp$free_bases_num <-  if_else(is.na(moneyball_imp$batting_hbp),0,as.numeric(moneyball_imp$batting_hbp)) + moneyball_imp$batting_bb
-moneyball_imp$total_bases <- moneyball_imp$batting_1B + 2 * moneyball_imp$batting_2b + 3 * moneyball_imp$batting_3b + 4 * moneyball_imp$batting_hr + moneyball_imp$batting_bb + if_else(is.na(moneyball_imp$batting_hbp),0,as.numeric(moneyball_imp$batting_hbp)) + moneyball_imp$baserun_sb
-moneyball_imp$total_bases_allowed = moneyball_imp$pitching_bb + 4 * moneyball_imp$pitching_hr + moneyball_imp$pitching_h
-moneyball_imp$HR_over_OP = moneyball_imp$batting_hr - moneyball_imp$pitching_hr
-moneyball_imp$walks_over_OP = moneyball_imp$batting_bb - moneyball_imp$pitching_bb
-moneyball_imp$SO_over_OP = moneyball_imp$pitching_so - moneyball_imp$batting_so
-# make alist of predictors and format them
-
-colnames(moneyball_imp)
+moneyball_MF$batting_1B <- moneyball_MF$batting_h-(moneyball_MF$batting_2b + moneyball_MF$batting_3b + moneyball_MF$batting_hr)
+moneyball_MF$free_bases_num <-  if_else(is.na(moneyball_MF$batting_hbp),0,as.numeric(moneyball_MF$batting_hbp)) + moneyball_MF$batting_bb
+moneyball_MF$total_bases <- moneyball_MF$batting_1B + 2 * moneyball_MF$batting_2b + 3 * moneyball_MF$batting_3b + 4 * moneyball_MF$batting_hr + moneyball_MF$batting_bb + if_else(is.na(moneyball_MF$batting_hbp),0,as.numeric(moneyball_MF$batting_hbp)) + moneyball_MF$baserun_sb
+moneyball_MF$total_bases_allowed = moneyball_MF$pitching_bb + 4 * moneyball_MF$pitching_hr + moneyball_MF$pitching_h
+moneyball_MF$HR_over_OP = moneyball_MF$batting_hr - moneyball_MF$pitching_hr
+moneyball_MF$walks_over_OP = moneyball_MF$batting_bb - moneyball_MF$pitching_bb
+moneyball_MF$SO_over_OP = moneyball_MF$pitching_so - moneyball_MF$batting_so
+# make alist of predictors and format them. This will make it easier when it comes to manually chose variables for the model.
 pred_list <-
   "index + target_wins + batting_h + batting_2b + batting_3b + batting_hr +
 batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr +
@@ -205,78 +206,103 @@ batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + w
 new_var <- c("batting_1B","free_bases_num","total_bases","total_bases_allowed","HR_over_OP","walks_over_OP","SO_over_OP")
 ```
 
-Now that we have imputed and created new variables, let's look at the correlation matrix to understand the correlation between the variables and the traget_wins
+Now that we have imputed and created new variables, let's look at the correlation matrix to understand the correlation between the variables and the traget_wins. Remember when `caret` suggested to delete `batting_hr and batting_hbp` from our model? Let's build a correlaion matrix to understand why.
 
 ```{r}
-moneyball_imp <- subset(moneyball_imp, select = -c(batting_hbp))
-cor(moneyball_imp)
+moneyball_MF <- subset(moneyball_MF, select = -c(batting_hbp))
+cor(moneyball_MF)
 ```
+Now that we created new variables, let's see what `caret` has to say about which variables to remove.
+```{r}
+colnames(moneyball_MF)[findCorrelation(cor(moneyball_MF), cutoff = 0.9)]
+```
+It suggesting `batting_hr` together with `free_bases_num and pitching_h`. According to the correlation matrix, `batting_hr` has a coefficient of correlation of 0.96 related to `pitching_hr`, `free_bases_num` has a coefficient of correlation of 0.99 related to `batting_bb`, and `pitching_h` has a coefficient of correlation of 0.99 related to `total_bases_allowed`. All these variables had a correlation of above th cuttoff point, 0.9. Let's remove those variables.
+```{r}
+moneyball_MF <- subset(moneyball_MF, select = -c(batting_hr, free_bases_num, pitching_h))
+
+pred_list <- "index + target_wins + batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP"
+```
+
 
 ## Build a Model
 
 Let's test a model to establish a baseline
 
 ```{r }
-str(moneyball_imp)
-base_model_all <- lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_hr + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp + batting_hbp + batting_hbp_bi + batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = moneyball_imp)
-par(mfrow=c(2,2))
+str(moneyball_MF)
+base_model_all <- lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = moneyball_MF)
+par(mfrow = c(2,2))
 plot(base_model_all)
 summary(base_model_all)
 mse <- function(sm) 
   mean(sm$residuals^2)
 
-paste('MSE equal ', mse(base_model_all))
+paste('MSE equal ', mse(base_model_all), "and RMSE is ", sqrt(mse(base_model_all)))
 ```
-Though R-squared and adjusted R-square is high, we can clearly see that this model dropping observations. Let's try to forget about the new additions, and build a model without them.
+Though R-squared and adjusted R-square is decent, we can clearly see that this model is not optmal. Let's try to forget about the new additions, and build a model without them.
+
+Let's fix the issue with outliers and see if we get any improvements. For the first approach we will use Winsoring approch.   
+For every outlier we will impute it with `Q1 - 1.5*IQR` or `Q3 + 1.5*IQR`, the cutoff for outliers.
+
+
+```{r}
+outlier_treat <- moneyball_MF[,-c(1,15)]
+comp_data <- moneyball_MF[,-c(1,15)]
+i = 1
+while (i %in% seq_along(outlier_treat)) {
+
+qnt <- quantile(outlier_treat[,i], probs = c(.25, .75), na.rm = T)
+caps <- quantile(outlier_treat[,i], probs = c(.05, .95), na.rm = T)
+H <- 1.5 * IQR(outlier_treat[,i], na.rm = T)
+outlier_treat[,i][outlier_treat[,i] < (qnt[1] - H)] <- caps[1]
+outlier_treat[,i][outlier_treat[,i] > (qnt[2] + H)] <- caps[2]
+ par(mfrow = c(1,2)) 
+  plot(outlier_treat$target_wins, outlier_treat[,i],  xlab = colnames(outlier_treat)[i] , ylab = "Target Wins", main = paste("Treated Scatter Plot of ",colnames(outlier_treat)[i]))
+  plot(comp_data$target_wins, comp_data[,i],xlab = colnames(comp_data)[i] , ylab = "Target Wins", main = paste("Scatter Plot of ",colnames(comp_data)[i]))
+   i = i + 1
+}
+#add back the columns that we dropped prior to the outlier treatment
+outlier_treat <- cbind(outlier_treat,moneyball_MF[,c(1,15)])
+```
+
+Let's try different models using the new data.
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
-moneyball_orig <- moneyball_imp[,1:17]
+
 base_model_orig <-
-  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_hr + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = outlier_treat)
   par(mfrow = c(2, 2))
   plot(base_model_orig)
   summary(base_model_orig)
   paste('MSE equal ', mse(base_model_orig))
 ```
-This model looks good, from a performance point of view(r2), but when I look at the variance of the residual I don't feel secure.  
-Let's build another model including lon those with low p-Values.
+This model looks good, from a performance point of view(r2), but when I look at the variance of the residual I don't feel secure.  Specially after analyising Cook's distance graph. There are several observations that are way out from the rest.
+Let's build another model including only those with low p-Values.
 
 ```{r}
 base_model_lp <-
-  lm(target_wins ~ batting_h + batting_2b + batting_hr + batting_bb + batting_so + baserun_sb + pitching_h + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
+  lm(target_wins ~ batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + pitching_bb + 
+       fielding_e + fielding_dp + batting_hbp_bi + total_bases + total_bases_allowed + walks_over_OP + SO_over_OP, data = outlier_treat)
   par(mfrow = c(2, 2))
   plot(base_model_lp)
   summary(base_model_lp)
   paste('MSE equal ', mse(base_model_lp))
 ```
 
-Lets remove variables causing multicollinearity using `findCorrelation()`.
-```{r}
-to_rm <- colnames(cor(moneyball_imp)[,findCorrelation(cor(moneyball_imp))])
-to_rm
-```
 
-```{r}
-base_model_noCol <-
-  lm(target_wins ~ batting_h + batting_2b + batting_bb + batting_so + baserun_sb + pitching_so + fielding_e + fielding_dp, data = moneyball_orig)
-  par(mfrow = c(2, 2))
-  plot(base_model_noCol)
-  summary(base_model_noCol)
-  paste('MSE equal ', mse(base_model_noCol))
-```
 Though the rsquared value went down, there are some improvements on the Cook's distance chart.
-Now let's try to use use the `caret` package to apply the transformations we discussed earlier in our exploration phase.  
+Now let's try to use use the `caret` package to apply the transformations we discussed earlier in our exploration phase.  I will include all the variables minus the ones cause Multicollinearity issues.
 
 1. Center and Scale the data
 2. Fix the the problem with outliers by using spatial sign Transformation  
 3. Last but not least a boxcox transformation to take car of the skewness   
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
-trans <- preProcess(moneyball_imp, method = c("BoxCox"))
-transformed <- predict(trans, moneyball_imp)
+trans <- preProcess(outlier_treat, method = c("BoxCox","center", "scale"))
+transformed <- predict(trans, outlier_treat)
 head(transformed)
 
 trans_model_all <-
-  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_h + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_1B + free_bases_num + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = transformed)
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = transformed)
   par(mfrow = c(2, 2))
   plot(trans_model_all)
   summary(trans_model_all)
@@ -284,28 +310,21 @@ trans_model_all <-
   paste('MSE equal ', mse(trans_model_all))
   
 ```
-
-```{r}
-par(mfrow = c(1, 3))
-i = 2
-while (i %in% c(2:17)) {
- 
-plot(transformed[,i], transformed$index, xlab = colnames(transformed)[i] , ylab = "Index", main = paste("cleveland dotplot of ",colnames(transformed)[i]))
-
-boxplot(transformed[,i], col = "#A71930", main = paste("Boxplot of ",colnames(transformed)[i]))
-
-hist(
-  transformed[,i],
-  col = "#A71930",
-  xlab = colnames(transformed)[i],
-  main = paste("Histogram of ",colnames(transformed)[i])
-)
-  i = i + 1
-}
-```
+The residual plots look pretty good, with the exception of some possibly influential observation.
 Looking at Cook's Distance, it's clear that we have influential data, but the other charts look right where they should be.
 
-Let's try, stepwise approach.
+Let's look at another model using the same transformed data, but now looking only on the columns with low p-value.
+```{r}
+trans_model_lp <-
+  lm(target_wins ~ batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_bb + fielding_e + fielding_dp  + batting_hbp_bi + total_bases + total_bases_allowed + walks_over_OP + SO_over_OP, data = transformed)
+  par(mfrow = c(2, 2))
+  plot(trans_model_lp)
+  summary(trans_model_lp)
+  
+  paste('MSE equal ', mse(trans_model_lp))
+```
+This model seems to be on par with the other models. I'll try stepwise approaches and then I'll see if removing "influencial" observations will improve the model.
+Let's try, stepwise approach.  
 1. Both direction
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 stepwise_base_model_bd <- stepAIC(trans_model_all, direction = "both")
@@ -340,12 +359,118 @@ paste('MSE equal ', mse(stepwise_base_model_bw))
 ```
 
 
+Let's remove influential observations based on cook's distance chart. We will remove the following observations: 1342, 1810, 1828, 2136, 1820, 2227,1340, 1811, 2233, 1896, 2020, 2228. 
+
+Those observations will be removed from these datasets: transformed and outlier_treat
+
+```{r}
+outlier_treat_rm <- outlier_treat[-c(1342, 1810, 1828, 2136, 1820, 2227,1340, 1811, 2233, 1896, 2020, 2228),]
+transformed_rm <- transformed[-c(1342, 1810, 1828, 2136, 1820, 2227,1340, 1811, 2233, 1896, 2020, 2228),]
+```
+
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+base_model_orig_rm <-
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = outlier_treat_rm)
+  par(mfrow = c(2, 2))
+  plot(base_model_orig_rm)
+  summary(base_model_orig_rm)
+  paste('MSE equal ', mse(base_model_orig_rm))
+```
+
+```{r}
+base_model_lp_rm <-
+  lm(target_wins ~ batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + pitching_bb + 
+       fielding_e + fielding_dp + batting_hbp_bi + total_bases + total_bases_allowed + walks_over_OP + SO_over_OP, data = outlier_treat_rm)
+  par(mfrow = c(2, 2))
+  plot(base_model_lp_rm)
+  summary(base_model_lp_rm)
+  paste('MSE equal ', mse(base_model_lp_rm))
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+trans_model_all_rm <-
+  lm(target_wins ~ batting_h + batting_2b + batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs  + pitching_hr + pitching_bb + pitching_so + fielding_e + fielding_dp  + batting_hbp_bi + batting_1B + total_bases + total_bases_allowed + HR_over_OP + walks_over_OP + SO_over_OP, data = transformed_rm)
+  par(mfrow = c(2, 2))
+  plot(trans_model_all_rm)
+  summary(trans_model_all_rm)
+  
+  paste('MSE equal ', mse(trans_model_all_rm))
+  
+```
+
+```{r}
+trans_model_lp_rm <-
+  lm(target_wins ~ batting_3b + batting_bb + batting_so + baserun_sb + baserun_cs + pitching_bb + fielding_e + fielding_dp  + batting_hbp_bi + total_bases + total_bases_allowed + walks_over_OP + SO_over_OP, data = transformed_rm)
+  par(mfrow = c(2, 2))
+  plot(trans_model_lp_rm)
+  summary(trans_model_lp_rm)
+  
+  paste('MSE equal ', mse(trans_model_lp_rm))
+```
+
+1. Stepwise Both direction
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_bd_rm <- stepAIC(trans_model_all_rm, direction = "both")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_bd_rm)
+  summary(stepwise_base_model_bd_rm)
+paste('MSE equal ', mse(stepwise_base_model_bd_rm))
+```
+2. Forward direction
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_fw_rm <- stepAIC(trans_model_all_rm, direction = "forward")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_fw_rm)
+  summary(stepwise_base_model_fw_rm)
+paste('MSE equal ', mse(stepwise_base_model_fw_rm))
+```
+
+
+3. Backwards direction
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+stepwise_base_model_bw_rm <- stepAIC(trans_model_all_rm, direction = "backward")
+
+par(mfrow = c(2, 2))
+  plot(stepwise_base_model_bw_rm)
+  summary(stepwise_base_model_bw_rm)
+paste('MSE equal ', mse(stepwise_base_model_bw_rm))
+```
+
+
+
+
 ## Conclusion
 
-It definitely made a difference when the transformation were applied. One can see the difference in the residual plots. The residual is now normal(per QQ plot), and there are no patterns when we look at he Rsiduals Vs Fitted plot.
-When looking at the Rsquared and Adjusted Rsquared together with the residual plots, it's easy to conclude that the model with the stepwise approach together with the transformations is the one that leads to a better model.
+It definitely made a difference when the transformation was applied. The only problem that I faced was that my prediction when in the thousands if I used the models created on the transformed data set. After paying a close attention on the Cook's distance for the models' residual, I removed certain observation that led to an improved model.
 
-Though RMSE and Rsquared from the other models seem to suggest otherwise, the stepwise model appears to be more stable. I also noticed by looking at the Cook's Distance plot that there are influncial observations, but for some reason I could not get robust regression to work. From my understanding, robust regression would put less enphasis on those data points, leading to a more accurate model.
+After testing more than 10 models, using different techniques and transformation, I settled with a model built after I capped outliers, removed variables causing multicollinearity, variables with low p-value, and removed influencial observations.
+
+Here is the model `base_model_lp_rm`:
+`Target Wins = 32.157432 
+- 0.035903 * moneyball_imp_test$batting_2b 
++ 0.068862 * moneyball_imp_test$batting_3b
++ 0.044466 * moneyball_imp_test$batting_bb 
+- 0.016966 * moneyball_imp_test$batting_so
++ 0.060647 * moneyball_imp_test$baserun_sb 
+- 0.050230 * moneyball_imp_test$pitching_bb
+- 0.043364 * moneyball_imp_test$fielding_e
+- 0.105258 * moneyball_imp_test$fielding_dp
+- 4.089404 * moneyball_imp_test$batting_hbp_bi
++ 0.021326 * moneyball_imp_test$total_bases
++ 0.011782 * moneyball_imp_test$total_bases_allowed
++ 0.023997 * moneyball_imp_test$walks_over_OP
++ 0.008021 * moneyball_imp_test$SO_over_OP`
+
+
+When looking at the Rsquared and Adjusted Rsquared together with the residual plots, the `base_model_lp_rm` model was not the best model. The stepwise model after removing influencial observation were the best model, but when tested on the test dataset, the numbers were in the thousands. It could be a step I missed, but  `base_model_lp_rm` will be my final model.
+
 
 
 
